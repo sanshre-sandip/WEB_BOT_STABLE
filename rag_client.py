@@ -87,6 +87,56 @@ def build_rag_payload(
     return "/generate", payload
 
 
+def _local_rag_answer(
+    query: str,
+    history: list[dict[str, str]] | None = None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    temperature: float | None = None,
+    source: str | None = None,
+    k: int | None = None,
+) -> str:
+    """Run RAG generation in-process when the backend is the local app."""
+    from llm.generator import Message, construct_prompt, generate_with_fallback
+    from RAG.vectorstore import get_vectorstore
+
+    provider = provider if provider is not None else LLM_PROVIDER
+    model = _resolve_model(provider, model if model is not None else DEFAULT_LLM_MODEL)
+    temperature = DEFAULT_LLM_TEMPERATURE if temperature is None else temperature
+    k = DEFAULT_RAG_K if k is None else k
+
+    store = get_vectorstore()
+    if store is None:
+        raise RuntimeError("Vector store not initialized or unavailable")
+
+    filter_dict = {"source": source} if source else None
+    docs = store.similarity_search(query, k=k, filter=filter_dict)
+    retriever_output = [
+        f"Source: {doc.metadata.get('source', 'unknown')}\n{doc.page_content}"
+        for doc in docs
+    ]
+    context = retriever_output if retriever_output else ["No relevant context found."]
+
+    history_messages = []
+    if history:
+        for item in history:
+            try:
+                history_messages.append(Message(**item))
+            except Exception:
+                continue
+
+    prompt = construct_prompt(query, context, history_messages)
+    output, _provider_used = generate_with_fallback(
+        provider,
+        model,
+        temperature,
+        False,
+        prompt,
+    )
+    return output
+
+
 def query_backend(
     query: str,
     history: list[dict[str, str]] | None = None,
@@ -98,16 +148,39 @@ def query_backend(
     """Call the backend and return the assistant answer."""
     history = history or []
     path, payload = build_rag_payload(query, history, **payload_kwargs)
-    url = f"{(backend_url or get_backend_url())}{path}"
+    backend_url = backend_url or get_backend_url()
+    local_backend = backend_url.rstrip("/") == get_backend_url().rstrip("/")
+
+    if local_backend and path == "/generate/rag":
+        try:
+            return _local_rag_answer(
+                query,
+                history,
+                provider=payload.get("provider"),
+                model=payload.get("model"),
+                temperature=payload.get("temperature"),
+                source=payload.get("source"),
+                k=payload.get("k"),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Local backend generation failed: {exc}") from exc
+
+    url = f"{backend_url}{path}"
     last_error: Exception | None = None
 
     for attempt in range(retries + 1):
         try:
             response = httpx.post(url, json=payload, timeout=CLIENT_REQUEST_TIMEOUT)
         except httpx.ConnectError as exc:
-            raise RuntimeError(f"Could not connect to backend at {get_backend_url()}") from exc
+            last_error = RuntimeError(f"Could not connect to backend at {backend_url}: {exc}")
+            if attempt < retries:
+                continue
+            raise last_error from exc
         except httpx.TimeoutException as exc:
-            raise RuntimeError(f"Request timed out calling {path}") from exc
+            last_error = RuntimeError(f"Request timed out calling {path}")
+            if attempt < retries:
+                continue
+            raise last_error from exc
 
         if response.status_code < 400:
             data = response.json()
