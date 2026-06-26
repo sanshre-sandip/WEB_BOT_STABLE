@@ -56,6 +56,24 @@ def record(duration_sec: float = 5.0, sample_rate: int = 16000) -> tuple[np.ndar
     return audio.flatten(), sample_rate
 
 
+def _resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
+    """Resample a mono float32 waveform to a target sample rate using linear interpolation."""
+    if orig_sr == target_sr:
+        return audio
+
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+
+    num_samples = int(round(len(audio) * target_sr / orig_sr))
+    if num_samples <= 0:
+        raise ValueError(f"Invalid resampling length: {num_samples}")
+
+    old_indices = np.arange(len(audio))
+    new_indices = np.linspace(0, len(audio) - 1, num_samples)
+    resampled = np.interp(new_indices, old_indices, audio).astype(np.float32)
+    return resampled
+
+
 def transcribe(
     audio: np.ndarray,
     sample_rate: int = 16000,
@@ -68,7 +86,9 @@ def transcribe(
 ) -> str:
     """Transcribe a float32 mono waveform with faster-whisper."""
     if sample_rate != 16000:
-        print(f"Note: resampling from {sample_rate} Hz is not implemented; using as-is.", flush=True)
+        print(f"Resampling from {sample_rate} Hz to 16000 Hz...", flush=True)
+        audio = _resample_audio(audio, sample_rate, target_sr=16000)
+        sample_rate = 16000
 
     model = _get_model(model_size, device, compute_type)
     print(f"Transcribing (VAD={vad_filter})...", flush=True)

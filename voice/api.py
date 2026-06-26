@@ -296,8 +296,16 @@ async def voice_chat(request: VoiceChatRequest):
     t3 = time.perf_counter()
     timings["rag_s"] = round(t3 - t2, 4)
 
+    backend_failure = False
     if rag_error:
-        raise HTTPException(status_code=502, detail=f"RAG backend error: {rag_error}")
+        from RAG.main import logger
+        logger.warning(f"RAG backend error: {rag_error}")
+        answer = (
+            "I'm sorry, I couldn't reach the assistant backend right now. "
+            "Please try again in a moment."
+        )
+        backend_failure = True
+
     if not answer or not answer.strip():
         answer = "I'm sorry, I didn't get a response from the assistant."
 
@@ -313,6 +321,8 @@ async def voice_chat(request: VoiceChatRequest):
     timings["total_s"] = round(t4 - t0, 4)
 
     status = "success" if audio_base64_out is not None else "partial"
+    if backend_failure:
+        status = "backend_unavailable"
     if tts_error:
         status = "tts_failed"
 
