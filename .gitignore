@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+chroma_db/
+*.chroma
+*.db
+logs/
+*.log
+tmp/
+.temp/
+web

@@ -1,0 +1,17 @@
+dotenv
+langchain 
+langchain-community
+langchain-ollama
+pypdf
+beautifulsoup4
+fastapi 
+uvicorn 
+streamlit
+langchain-text-splitters
+langchain-huggingface 
+sentence-transformers
+langchain-chroma 
+chromadb
+langchain-openai
+langchain-anthropic
+langchain-google-genai

@@ -1,0 +1,7 @@
+faster-whisper
+edge-tts
+sounddevice
+numpy
+pygame
+httpx
+python-dotenv
