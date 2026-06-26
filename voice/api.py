@@ -179,6 +179,35 @@ def _decode_audio(audio_base64: str) -> tuple[np.ndarray, int]:
     )
 
 
+def _amplify_audio(audio: np.ndarray, target_rms: float = 0.15) -> np.ndarray:
+    """Amplify audio to reach target RMS level if it's too quiet.
+    
+    Args:
+        audio: Audio data as numpy array
+        target_rms: Target RMS level (default 0.15 for normal speech)
+        
+    Returns:
+        Amplified audio array
+    """
+    current_rms = np.sqrt(np.mean(audio**2))
+    
+    # If audio is already loud enough, return as-is
+    if current_rms < 1e-6 or current_rms >= target_rms:
+        return audio
+    
+    # Calculate amplification factor
+    amplification = target_rms / current_rms
+    
+    # Amplify but clip to prevent distortion
+    amplified = audio * amplification
+    amplified = np.clip(amplified, -1.0, 1.0)
+    
+    from RAG.main import logger
+    logger.info(f"Audio amplified: {current_rms:.6f} → {np.sqrt(np.mean(amplified**2)):.6f} RMS")
+    
+    return amplified
+
+
 async def _query_backend_async(query: str, history: list[dict[str, str]], source: str | None, k: int, temperature: float):
     try:
         from rag_client import query_backend
@@ -207,10 +236,14 @@ async def voice_chat(request: VoiceChatRequest):
         raise HTTPException(status_code=500, detail=f"Failed to load Whisper model: {exc}")
 
     audio, sr = _decode_audio(request.audio_base64)
-    rms = np.sqrt(np.mean(audio**2))
+    original_rms = np.sqrt(np.mean(audio**2))
     from RAG.main import logger
-    logger.info(f"Voice Chat: Received {len(audio)} samples at {sr}Hz. RMS Volume: {rms:.6f}")
+    logger.info(f"Voice Chat: Received {len(audio)} samples at {sr}Hz. RMS Volume: {original_rms:.6f}")
 
+    # Amplify audio if volume is too low to help Whisper detect speech
+    if original_rms < 0.15:
+        audio = _amplify_audio(audio, target_rms=0.15)
+    
     t1 = time.perf_counter()
     timings["audio_decode_s"] = round(t1 - t0, 4)
 
@@ -228,9 +261,30 @@ async def voice_chat(request: VoiceChatRequest):
     t2 = time.perf_counter()
     timings["stt_s"] = round(t2 - t1, 4)
 
-    if not text.strip():
-        logger.warning(f"No speech detected. RMS Volume was {rms:.6f}")
-        raise HTTPException(status_code=400, detail=f"No speech detected. Audio volume level: {rms:.6f}")
+    # If no speech detected, provide a default response
+    if not text or not text.strip():
+        logger.warning(f"No speech detected in audio. Original RMS volume: {original_rms:.6f}")
+        answer = "I didn't detect any speech in the audio. Please try again with clearer audio or speak louder."
+        
+        audio_base64_out = None
+        try:
+            audio_bytes = await _synthesize_bytes(answer, tts_voice, rate=tts_rate, pitch=tts_pitch)
+            audio_base64_out = base64.b64encode(audio_bytes).decode()
+        except Exception as exc:
+            logger.error(f"TTS failed for no-speech response: {exc}")
+        
+        t3 = time.perf_counter()
+        timings["rag_s"] = 0.0
+        timings["tts_s"] = round(t3 - t2, 4)
+        timings["total_s"] = round(t3 - t0, 4)
+        
+        return VoiceChatResponse(
+            status="no_speech",
+            transcription="",
+            answer=answer,
+            audio_base64=audio_base64_out,
+            timings=timings,
+        )
 
     answer, rag_error = await _query_backend_async(
         query=text,
