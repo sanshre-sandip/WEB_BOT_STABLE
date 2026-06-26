@@ -94,12 +94,35 @@ class VoiceStatusResponse(BaseModel):
 def _decode_audio(audio_base64: str) -> tuple[np.ndarray, int]:
     """Decode base64 audio and normalize to 16kHz mono using FFmpeg."""
     import subprocess
+    from RAG.main import logger
     
     # Strip data URL prefix if present
     if "," in audio_base64[:100]:
         audio_base64 = audio_base64.split(",")[1]
-        
-    raw_bytes = base64.b64decode(audio_base64)
+    
+    # Validate input
+    if not audio_base64 or not audio_base64.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="audio_base64 is empty. Please provide valid Base64-encoded audio data."
+        )
+    
+    # Decode Base64
+    try:
+        raw_bytes = base64.b64decode(audio_base64)
+    except Exception as exc:
+        logger.error(f"Base64 decode failed: {exc}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid Base64 encoding: {str(exc)}"
+        )
+    
+    if not raw_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Decoded audio data is empty. Please provide valid audio data."
+        )
+    
     target_sr = 16000
     
     try:
@@ -118,10 +141,9 @@ def _decode_audio(audio_base64: str) -> tuple[np.ndarray, int]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        out, err = process.communicate(input=raw_bytes)
+        out, err = process.communicate(input=raw_bytes, timeout=10)
         
         if process.returncode != 0:
-            from RAG.main import logger
             logger.error(f"FFmpeg error: {err.decode()}")
             raise Exception("FFmpeg failed to decode audio")
             
@@ -131,8 +153,13 @@ def _decode_audio(audio_base64: str) -> tuple[np.ndarray, int]:
             
         return data, target_sr
         
+    except subprocess.TimeoutExpired:
+        logger.error("FFmpeg processing timed out")
+        raise HTTPException(
+            status_code=500,
+            detail="Audio processing timed out. Please try with a shorter audio file."
+        )
     except Exception as exc:
-        from RAG.main import logger
         logger.warning(f"FFmpeg decoding failed ({exc}), trying fallback...")
         
     # Fallback for simple WAV/MP3 if FFmpeg fails
@@ -141,13 +168,14 @@ def _decode_audio(audio_base64: str) -> tuple[np.ndarray, int]:
         data, sr = sf.read(io.BytesIO(raw_bytes), dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
+        logger.info(f"Fallback soundfile decode succeeded: {len(data)} samples at {sr}Hz")
         return data, int(sr)
-    except Exception:
-        pass
+    except Exception as sf_exc:
+        logger.error(f"Fallback soundfile also failed: {sf_exc}")
         
     raise HTTPException(
         status_code=400, 
-        detail="Failed to decode audio. Ensure you are sending valid Base64 data (WAV, MP3, or WebM)."
+        detail="Failed to decode audio. Ensure you are sending valid Base64-encoded audio (WAV, MP3, or WebM)."
     )
 
 
