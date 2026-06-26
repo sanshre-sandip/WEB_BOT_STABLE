@@ -47,7 +47,7 @@ pip install -r voice/requirements.txt
 ### 2. Configuration
 Create or update the `.env` file in the root directory:
 ```env
-BACKEND=http://localhost:8000
+BACKEND=http://localhost:8011
 ```
 
 ## 🏃 Running the Application
@@ -58,7 +58,7 @@ You need to run the backend and frontend in two separate terminal sessions.
 ```bash
 python RAG/main.py
 ```
-*The backend will start on `http://localhost:8000`.*
+*The backend will start on `http://localhost:8011`.*
 
 ### Step 2: Start the Frontend (Streamlit)
 ```bash
@@ -87,7 +87,7 @@ The backend exposes a voice pipeline under `/voice/*`.
 ### Example: Voice Chat
 
 ```bash
-curl -X POST "http://localhost:8000/voice/chat" \
+curl -X POST "http://localhost:8011/voice/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "audio_base64": "<base64-encoded-wav>",

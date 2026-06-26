@@ -40,7 +40,7 @@ def main() -> None:
     else:
         print(
             "Backend: NOT reachable — start it with:\n"
-            "  uvicorn RAG.main:app --host 0.0.0.0 --port 8000"
+            "  uvicorn RAG.main:app --host 0.0.0.0 --port 8011"
         )
 
     try:
